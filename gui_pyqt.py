@@ -1675,11 +1675,14 @@ class VideoUniquifierApp(QMainWindow):
                 self.log("Music overlay: DISABLED (original audio preserved)")
             self.log(f"Creating {len(input_videos) * self.config['copies_per_video']} outputs ( {self.config['copies_per_video']} copies per video )\n")
 
+            # Fixed angle-to-zoom mapping from video_uniquifier.py
+            ANGLE_ZOOM_MAP = {
+                -3: 1.085, -2: 1.05, -1: 1.025,
+                1: 1.025, 2: 1.05, 3: 1.085
+            }
             self.log("Angle-to-Zoom Mapping:")
-            for angle, zoom in sorted(self.config['angle_zoom_map'].items(), key=lambda x: int(x[0])):
-                angle_int = int(angle)
-                zoom_float = float(zoom)
-                self.log(f"  {angle_int:+3d}° → {zoom_float:.4f}x zoom ({(zoom_float-1)*100:.1f}% crop)")
+            for angle, zoom in sorted(ANGLE_ZOOM_MAP.items()):
+                self.log(f"  {angle:+3d}° → {zoom:.4f}x zoom ({(zoom-1)*100:.1f}% crop)")
             self.log("")
 
             for i, input_video in enumerate(input_videos, 1):
