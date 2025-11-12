@@ -28,6 +28,7 @@ from PyQt6.QtGui import QFont, QPalette, QColor
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
 # === DEFAULT CONFIG ===
+# Config matching video_uniquifier.py behavior
 DEFAULT_CONFIG = {
     'input_folder': os.path.join(SCRIPT_DIR, 'input'),
     'output_folder': os.path.join(SCRIPT_DIR, 'output'),
@@ -37,6 +38,8 @@ DEFAULT_CONFIG = {
     'telegram_token': '',
     'add_music': True,
     'copies_per_video': 5,
+    # NOTE: Settings below are kept for UI compatibility only
+    # Video processing now uses fixed values from video_uniquifier.py
     'angle_zoom_map': {
         '-3': 1.085, '-2': 1.05, '-1': 1.025,
         '1': 1.025, '2': 1.05, '3': 1.085
@@ -1785,91 +1788,106 @@ class VideoUniquifierApp(QMainWindow):
             return 1920, 1080
 
     def get_random_filters(self):
+        """Random video filters - simple version from video_uniquifier.py"""
         filters = []
-        effects = self.config.get('effects_settings', {})
-
-        if random.random() < effects.get('color_balance_probability', 0.7):
-            range_val = effects.get('color_balance_range', 0.05)
-            rs = random.uniform(-range_val, range_val)
-            gs = random.uniform(-range_val, range_val)
-            bs = random.uniform(-range_val, range_val)
-            rm = random.uniform(-range_val, range_val)
-            gm = random.uniform(-range_val, range_val)
-            bm = random.uniform(-range_val, range_val)
+        if random.random() > 0.3:
+            rs = random.uniform(-0.05, 0.05)
+            gs = random.uniform(-0.05, 0.05)
+            bs = random.uniform(-0.05, 0.05)
+            rm = random.uniform(-0.05, 0.05)
+            gm = random.uniform(-0.05, 0.05)
+            bm = random.uniform(-0.05, 0.05)
             filters.append(f"colorbalance=rs={rs:.3f}:gs={gs:.3f}:bs={bs:.3f}:rm={rm:.3f}:gm={gm:.3f}:bm={bm:.3f}")
-
-        if random.random() < effects.get('brightness_contrast_probability', 0.5):
-            brightness = random.uniform(-effects.get('brightness_range', 0.02), effects.get('brightness_range', 0.02))
-            contrast = random.uniform(effects.get('contrast_min', 0.98), effects.get('contrast_max', 1.02))
+        if random.random() > 0.5:
+            brightness = random.uniform(-0.02, 0.02)
+            contrast = random.uniform(0.98, 1.02)
             filters.append(f"eq=brightness={brightness:.3f}:contrast={contrast:.3f}")
-
-        if random.random() < effects.get('saturation_probability', 0.5):
-            saturation = random.uniform(effects.get('saturation_min', 0.95), effects.get('saturation_max', 1.05))
+        if random.random() > 0.5:
+            saturation = random.uniform(0.95, 1.05)
             filters.append(f"eq=saturation={saturation:.3f}")
-
         return filters
 
     def uniquify_video(self, input_video, music_video, output_video):
+        """
+        Process video with:
+        1. Random angle selection from ANGLE_ZOOM_MAP
+        2. Corresponding fixed zoom for that angle
+        3. All other uniquification (mirror, filters, etc.)
+        Simple version from video_uniquifier.py
+        """
+        # Fixed angle-to-zoom mapping
+        ANGLE_ZOOM_MAP = {
+            -3: 1.085,  # 8.5% zoom for 3° left
+            -2: 1.05,   # 5% zoom for 2° left
+            -1: 1.025,  # 2.5% zoom for 1° left
+            1: 1.025,   # 2.5% zoom for 1° right
+            2: 1.05,    # 5% zoom for 2° right
+            3: 1.085,   # 8.5% zoom for 3° right
+        }
+
         try:
+            # Get original resolution
             orig_w, orig_h = self.get_video_resolution(input_video)
 
-            angle_zoom_map = {int(k): v for k, v in self.config.get('angle_zoom_map', {}).items()}
-            angle_degrees = random.choice(list(angle_zoom_map.keys()))
-            zoom_factor = angle_zoom_map[angle_degrees]
+            # SELECT ONE RANDOM ANGLE with its fixed zoom
+            angle_degrees = random.choice(list(ANGLE_ZOOM_MAP.keys()))
+            zoom_factor = ANGLE_ZOOM_MAP[angle_degrees]
             angle_radians = angle_degrees * math.pi / 180
 
-            mirror_prob = self.config.get('effects_settings', {}).get('mirror_probability', 0.5)
-            mirror = random.random() < mirror_prob
+            # Random parameters (rest of uniquification)
+            mirror = random.random() > 0.5
 
-            video_settings = self.config.get('video_settings', {})
-            resolution = video_settings.get('output_resolution', '1080x1920').split('x')
-            output_width = int(resolution[0])
-            output_height = int(resolution[1])
-
+            # Build filter chain
             filter_parts = []
+
+            # 1. Rotate with black background
             filter_parts.append(f"rotate={angle_radians:.6f}:fillcolor=black")
 
+            # 2. Apply zoom corresponding to this angle to hide corners
             zoom_w = int(orig_w / zoom_factor)
             zoom_h = int(orig_h / zoom_factor)
             zoom_w = zoom_w if zoom_w % 2 == 0 else zoom_w - 1
             zoom_h = zoom_h if zoom_h % 2 == 0 else zoom_h - 1
             filter_parts.append(f"crop={zoom_w}:{zoom_h}:(iw-{zoom_w})/2:(ih-{zoom_h})/2")
 
-            filter_parts.append(f"scale={output_width}:{output_height}:force_original_aspect_ratio=decrease")
-            filter_parts.append(f"pad={output_width}:{output_height}:(ow-iw)/2:(oh-ih)/2:color=black")
+            # 3. Scale to VERTICAL 1080x1920 (Instagram Reels format)
+            filter_parts.append("scale=1080:1920:force_original_aspect_ratio=decrease")
+            filter_parts.append("pad=1080:1920:(ow-iw)/2:(oh-ih)/2:color=black")
 
+            # 4. Mirror if needed
             if mirror:
                 filter_parts.append("hflip")
 
+            # 5. Add random visual filters
             random_filters = self.get_random_filters()
             filter_parts.extend(random_filters)
 
             video_filter = ",".join(filter_parts)
 
+            # Check if we should add music from config
             add_music = self.config.get('add_music', True)
 
-            temp_video = output_video if not add_music else output_video.replace('.mp4', '_temp.mp4')
-
+            # Step 1: Process video without audio
+            temp_video = output_video.replace('.mp4', '_temp.mp4') if add_music else output_video
             cmd1 = [
                 "ffmpeg",
                 "-hide_banner", "-loglevel", "error",
                 "-i", input_video,
                 "-filter:v", video_filter,
-                "-c:v", video_settings.get('video_codec', 'libx264'),
-                "-preset", video_settings.get('video_preset', 'veryfast'),
-                "-crf", str(video_settings.get('video_crf', 23)),
-                "-pix_fmt", video_settings.get('pixel_format', 'yuv420p'),
+                "-c:v", "libx264",
+                "-preset", "veryfast",
+                "-crf", "23",
+                "-pix_fmt", "yuv420p",
             ]
 
             if add_music:
                 cmd1.append("-an")
-            else:
-                cmd1.extend(["-c:a", video_settings.get('audio_codec', 'aac'), "-b:a", video_settings.get('audio_bitrate', '128k')])
 
             cmd1.extend(["-y", temp_video])
 
             subprocess.run(cmd1, check=True)
 
+            # Step 2: Add audio from music video (if add_music is True)
             if add_music and music_video:
                 cmd2 = [
                     "ffmpeg",
@@ -1877,8 +1895,8 @@ class VideoUniquifierApp(QMainWindow):
                     "-i", temp_video,
                     "-i", music_video,
                     "-c:v", "copy",
-                    "-c:a", video_settings.get('audio_codec', 'aac'),
-                    "-b:a", video_settings.get('audio_bitrate', '128k'),
+                    "-c:a", "aac",
+                    "-b:a", "128k",
                     "-map", "0:v:0",
                     "-map", "1:a:0",
                     "-shortest",
@@ -1893,8 +1911,7 @@ class VideoUniquifierApp(QMainWindow):
                     os.remove(temp_video)
 
             mirror_str = "🔀" if mirror else "  "
-            music_str = "🎵" if add_music else "🔇"
-            self.log(f"✓ {os.path.basename(output_video)} | Angle: {angle_degrees:+3d}° | Zoom: {zoom_factor:.4f}x | Mirror: {mirror_str} | Music: {music_str}")
+            self.log(f"✓ {os.path.basename(output_video)} | Angle: {angle_degrees:+3d}° | Zoom: {zoom_factor:.4f}x | Mirror: {mirror_str}")
             return True
         except Exception as e:
             self.log(f"✗ {os.path.basename(output_video)} | Error: {str(e)}")
