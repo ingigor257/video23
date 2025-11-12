@@ -545,6 +545,8 @@ class GlowButton(QPushButton):
 class VideoUniquifierApp(QMainWindow):
     # Сигналы для обновления UI из фоновых потоков
     face_progress_signal = pyqtSignal(int, int)  # (current, total)
+    log_signal = pyqtSignal(str)  # для безопасного логирования из потоков
+    processing_finished_signal = pyqtSignal()  # когда обработка завершена
 
     def __init__(self):
         super().__init__()
@@ -569,8 +571,10 @@ class VideoUniquifierApp(QMainWindow):
         self.bot_thread = None
         self.user_states = {}
 
-        # Подключаем сигнал для обновления прогресса генерации
+        # Подключаем сигналы для обновления UI из фоновых потоков
         self.face_progress_signal.connect(self.update_face_progress)
+        self.log_signal.connect(self._log_to_console)
+        self.processing_finished_signal.connect(self._on_processing_finished)
 
         # List of sliders to disable wheel
         self.sliders = []
@@ -1464,8 +1468,18 @@ class VideoUniquifierApp(QMainWindow):
     def clear_console(self):
         self.console_text.clear()
 
-    def log(self, message):
+    def _log_to_console(self, message):
+        """Безопасная функция для обновления консоли (вызывается только из главного потока)"""
         self.console_text.append(message)
+
+    def log(self, message):
+        """Логирование с поддержкой многопоточности"""
+        # Проверяем, вызывается ли из главного потока
+        if threading.current_thread() is threading.main_thread():
+            self.console_text.append(message)
+        else:
+            # Из другого потока - используем сигнал
+            self.log_signal.emit(message)
 
     def start_download(self, auto_process):
         if self.is_downloading:
@@ -1722,9 +1736,19 @@ class VideoUniquifierApp(QMainWindow):
             import traceback
             traceback.print_exc()
         finally:
-            self.is_running = False
-            self.stop_requested = False
-            self.current_video = ""
+            # Отправляем сигнал для безопасного обновления UI из главного потока
+            self.processing_finished_signal.emit()
+
+    def _on_processing_finished(self):
+        """Безопасное обновление UI после завершения обработки (вызывается из главного потока)"""
+        self.is_running = False
+        self.stop_requested = False
+        self.current_video = ""
+        self.start_btn.setEnabled(True)
+        self.stop_btn.setEnabled(False)
+        self.status_label.setText("● ГОТОВ")
+        self.status_label.setProperty("class", "status-ready")
+        self.status_label.setStyleSheet("font-size: 14px; font-weight: bold; color: #00ff88;")
 
     def stop_processing(self):
         if not self.is_running:
